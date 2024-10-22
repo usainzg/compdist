@@ -1,6 +1,6 @@
 # bazel build files
 bazel-bin
-bazel-mlir-tutorial
+bazel-compdist
 bazel-out
 bazel-testlogs
 
