@@ -1,3 +1,6 @@
+// RUN: tutorial-opt %s --affine-distribute-to-mpi > %t
+// RUN: FileCheck %s < %t
+
 func.func @add_arrays(%A: memref<100xf32>, %B: memref<100xf32>, %C: memref<100xf32>) {
   affine.for %i = 0 to 100 {
     %a = memref.load %A[%i] : memref<100xf32>
