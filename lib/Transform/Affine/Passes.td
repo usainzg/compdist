@@ -19,4 +19,16 @@ def AffineFullUnrollPatternRewrite : Pass<"affine-full-unroll-rewrite"> {
   let dependentDialects = ["mlir::affine::AffineDialect"];
 }
 
+def AffineDistributeToMPI : Pass<"affine-distribute-to-mpi"> {
+  let summary = "Distribute affine loops to MPI processes";
+  let description = [{
+    Distribute affine loops to MPI processes.
+  }];
+  let dependentDialects = [
+    "mlir::affine::AffineDialect",
+    "mlir::scf::SCFDialect",
+    "mlir::mpi::MPIDialect",
+  ];
+}
+
 #endif  // LIB_TRANSFORM_AFFINE_PASSES_TD_

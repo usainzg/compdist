@@ -30,6 +30,24 @@ gentbl_cc_library(
 )
 
 cc_library(
+  name = "AffineDistributeToMPI",
+  srcs = ["AffineDistributeToMPI.cpp"],
+  hdrs = [
+      "AffineDistributeToMPI.h",
+      "Passes.h",
+  ],
+  deps = [
+      ":pass_inc_gen",
+      "@llvm-project//mlir:AffineDialect",
+      "@llvm-project//mlir:MPIDialect",
+      "@llvm-project//mlir:SCFDialect",
+      "@llvm-project//mlir:FuncDialect",
+      "@llvm-project//mlir:Pass",
+      "@llvm-project//mlir:Transforms",
+  ],
+)
+
+cc_library(
     name = "AffineFullUnroll",
     srcs = ["AffineFullUnroll.cpp"],
     hdrs = [
@@ -67,6 +85,7 @@ cc_library(
     name = "Passes",
     hdrs = ["Passes.h"],
     deps = [
+        "AffineDistributeToMPI",
         ":AffineFullUnroll",
         ":AffineFullUnrollPatternRewrite",
         ":pass_inc_gen",
