@@ -18,6 +18,7 @@ struct AffineDistributeToMPI
     : impl::AffineDistributeToMPIBase<AffineDistributeToMPI> {
   using AffineDistributeToMPIBase::AffineDistributeToMPIBase;
 
+  // TODO: change to work with funcOp instead of affineForOp?
   void runOnOperation() {
     getOperation()->walk([&](AffineForOp op) {
       OpBuilder builder(op.getContext());
@@ -46,9 +47,37 @@ struct AffineDistributeToMPI
       // create if-else structure
       auto ifOp = builder.create<scf::IfOp>(op.getLoc(), cmpOp);
 
+      // process rank 0
+      builder.setInsertionPointToStart(&ifOp.getThenRegion().front());
+      processRankZero(builder, op);
+
+      // process rank 1
+      builder.setInsertionPointToStart(&ifOp.getElseRegion().front());
+      processRankOne(builder, op);
+
       // remove original loop
       op.erase();
     });
+  }
+
+  void processRankZero(OpBuilder &builder, affine::AffineForOp forOp) {
+    // send first half of data to rank 1
+    auto loc = forOp.getLoc();
+    auto retvalType = builder.getType<mpi::RetvalType>();
+    auto i32Type = builder.getI32Type();
+
+    // TODO: for (auto arg : funcOp.getArguments()) { mpi_send }
+
+    // create affine loop for the second half
+    // receive processed first half
+  }
+
+  void processRankOne(OpBuilder &builder, affine::AffineForOp forOp) {
+    // allocate local buffers
+    // receive data from rank 0
+    // create affine loop for the first half
+    // send result back to rank 0
+    // cleanup local buffers (memrefs dealloc)
   }
 };
 
