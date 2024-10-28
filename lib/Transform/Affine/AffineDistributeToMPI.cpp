@@ -3,8 +3,8 @@
 #include "mlir/Dialect/MPI/IR/MPI.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/Value.h"
 #include "mlir/include/mlir/Pass/Pass.h"
 
 namespace mlir {
@@ -51,7 +51,7 @@ struct AffineDistributeToMPI
 
       // process rank 0
       builder.setInsertionPointToStart(&ifOp.getThenRegion().front());
-      processRankZero(builder, op);
+      processRankZero(builder, op, c1, c0);
 
       // process rank 1
       builder.setInsertionPointToStart(&ifOp.getElseRegion().front());
@@ -62,16 +62,14 @@ struct AffineDistributeToMPI
     });
   }
 
-  void processRankZero(OpBuilder &builder, affine::AffineForOp forOp) {
+  void processRankZero(OpBuilder &builder, affine::AffineForOp forOp,
+                       Value dest, Value tag) {
     // send first half of data to rank 1
     auto loc = forOp.getLoc();
     auto retvalType = builder.getType<mpi::RetvalType>();
     auto i32Type = builder.getI32Type();
 
     // TODO: for (auto arg : funcOp.getArguments()) { mpi_send }
-
-    // create affine loop for the second half
-    // receive processed first half
 
     // send first half of data to rank 1
     // get all memref operands from the loop body
@@ -89,32 +87,20 @@ struct AffineDistributeToMPI
 
     // send each memref to rank 1
     for (auto memref : memrefOperands) {
-      builder.create<mpi::SendOp>(loc, retvalType, memref,
-                                  /*dest=*/builder.getI32IntegerAttr(1),
-                                  /*tag=*/builder.getI32IntegerAttr(0));
+      builder.create<mpi::SendOp>(loc, retvalType, memref, dest, tag);
     }
 
     // create affine loop for the second half
     auto upperBound = forOp.getUpperBound();
     auto lowerBound = getHalfPoint(builder, forOp);
 
-    auto newLoop = builder.create<AffineForOp>(
-        loc, lowerBound, upperBound,
-        [&](OpBuilder &nestedBuilder, Location loc, ValueRange ivs) {
-          // clone the original loop body
-        BlockAndValueMapping mapping;
-          mapping.map(forOp.getInductionVar(), ivs.front());
-          for (auto &op : forOp.getBody()->without_terminator())
-            nestedBuilder.clone(op, mapping);
-        });
-
+    // insert new loop
+    
     // receive processed first half
     // only receive the result memref (assumed to be the last operand)
     if (!memrefOperands.empty()) {
       auto resultMemref = memrefOperands.back();
-      builder.create<mpi::RecvOp>(loc, retvalType, resultMemref,
-                                  /*source=*/builder.getI32IntegerAttr(1),
-                                  /*tag=*/builder.getI32IntegerAttr(0));
+      builder.create<mpi::RecvOp>(loc, retvalType, resultMemref, dest, tag);
     }
   }
 
