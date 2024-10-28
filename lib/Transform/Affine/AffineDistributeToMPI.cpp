@@ -1,7 +1,9 @@
 #include "lib/Transform/Affine/AffineDistributeToMPI.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/MPI/IR/MPI.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/include/mlir/Pass/Pass.h"
 
@@ -70,6 +72,50 @@ struct AffineDistributeToMPI
 
     // create affine loop for the second half
     // receive processed first half
+
+    // send first half of data to rank 1
+    // get all memref operands from the loop body
+    SmallVector<Value, 4> memrefOperands;
+    forOp.walk([&](Operation *op) {
+      if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
+        if (!llvm::is_contained(memrefOperands, loadOp.getMemref()))
+          memrefOperands.push_back(loadOp.getMemref());
+      }
+      if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
+        if (!llvm::is_contained(memrefOperands, storeOp.getMemref()))
+          memrefOperands.push_back(storeOp.getMemref());
+      }
+    });
+
+    // send each memref to rank 1
+    for (auto memref : memrefOperands) {
+      builder.create<mpi::SendOp>(loc, retvalType, memref,
+                                  /*dest=*/builder.getI32IntegerAttr(1),
+                                  /*tag=*/builder.getI32IntegerAttr(0));
+    }
+
+    // create affine loop for the second half
+    auto upperBound = forOp.getUpperBound();
+    auto lowerBound = getHalfPoint(builder, forOp);
+
+    auto newLoop = builder.create<AffineForOp>(
+        loc, lowerBound, upperBound,
+        [&](OpBuilder &nestedBuilder, Location loc, ValueRange ivs) {
+          // clone the original loop body
+        BlockAndValueMapping mapping;
+          mapping.map(forOp.getInductionVar(), ivs.front());
+          for (auto &op : forOp.getBody()->without_terminator())
+            nestedBuilder.clone(op, mapping);
+        });
+
+    // receive processed first half
+    // only receive the result memref (assumed to be the last operand)
+    if (!memrefOperands.empty()) {
+      auto resultMemref = memrefOperands.back();
+      builder.create<mpi::RecvOp>(loc, retvalType, resultMemref,
+                                  /*source=*/builder.getI32IntegerAttr(1),
+                                  /*tag=*/builder.getI32IntegerAttr(0));
+    }
   }
 
   void processRankOne(OpBuilder &builder, affine::AffineForOp forOp) {
@@ -78,6 +124,18 @@ struct AffineDistributeToMPI
     // create affine loop for the first half
     // send result back to rank 0
     // cleanup local buffers (memrefs dealloc)
+  }
+
+  // helper function to get the midpoint of the loop range
+  AffineMap getHalfPoint(OpBuilder &builder, AffineForOp forOp) {
+    auto context = builder.getContext();
+    auto upperMap = forOp.getUpperBoundMap();
+    auto upperBound = upperMap.getResult(0);
+
+    // create an affine map that divides the upper bound by 2
+    auto halfExpr = upperBound.floorDiv(2);
+    return AffineMap::get(upperMap.getNumDims(), upperMap.getNumSymbols(),
+                          halfExpr, context);
   }
 };
 
