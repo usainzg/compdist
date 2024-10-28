@@ -1,16 +1,23 @@
 # compdist - project report
 
+## main goal
+
+- explore the intersection betweenc compilers and distributed computing, trying to enrich compilers
+with domain specific information about the target system, e.g., topology, nodes capacity, etc.
+
 ## progress
 
 - the basic idea is to have a pass to optimize affine -> mpi, starting with
 a basic partition (A+B) in two ranks, processing a half of the data on each
-process
+process []
 
 ## tasks
 
 - clean mlir-tutorial code []
 - create a basic pass using cpp mechanism []
 - update basic version with more ranks (e.g., -n-ranks=10) []
+- create a new version where the number of ranks is passed as an option
+and the pass distributes the data uniformly to every rank []
 
 ## Examples
 
