@@ -2,8 +2,6 @@
 #define LIB_TRANSFORM_AFFINE_PASSES_H_
 
 #include "lib/Transform/Affine/AffineDistributeToMPI.h"
-// #include "lib/Transform/Affine/AffineFullUnroll.h"
-// #include "lib/Transform/Affine/AffineFullUnrollPatternRewrite.h"
 
 namespace mlir {
 namespace tutorial {

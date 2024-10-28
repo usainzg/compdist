@@ -48,47 +48,11 @@ cc_library(
   ],
 )
 
-# cc_library(
-#     name = "AffineFullUnroll",
-#     srcs = ["AffineFullUnroll.cpp"],
-#     hdrs = [
-#         "AffineFullUnroll.h",
-#         "Passes.h",
-#     ],
-#     deps = [
-#         ":pass_inc_gen",
-#         "@llvm-project//mlir:AffineDialect",
-#         "@llvm-project//mlir:AffineUtils",
-#         "@llvm-project//mlir:FuncDialect",
-#         "@llvm-project//mlir:Pass",
-#         "@llvm-project//mlir:Transforms",
-#     ],
-# )
-
-# cc_library(
-#     name = "AffineFullUnrollPatternRewrite",
-#     srcs = ["AffineFullUnrollPatternRewrite.cpp"],
-#     hdrs = [
-#         "AffineFullUnrollPatternRewrite.h",
-#         "Passes.h",
-#     ],
-#     deps = [
-#         ":pass_inc_gen",
-#         "@llvm-project//mlir:AffineDialect",
-#         "@llvm-project//mlir:AffineUtils",
-#         "@llvm-project//mlir:FuncDialect",
-#         "@llvm-project//mlir:Pass",
-#         "@llvm-project//mlir:Transforms",
-#     ],
-# )
-
 cc_library(
     name = "Passes",
     hdrs = ["Passes.h"],
     deps = [
         "AffineDistributeToMPI",
-        # ":AffineFullUnroll",
-        # ":AffineFullUnrollPatternRewrite",
         ":pass_inc_gen",
     ],
 )
