@@ -20,11 +20,11 @@ struct AffineDistributeToMPI
     : impl::AffineDistributeToMPIBase<AffineDistributeToMPI> {
   using AffineDistributeToMPIBase::AffineDistributeToMPIBase;
 
-  // TODO: change to work with funcOp instead of affineForOp?
+  // NOTE: change to work with funcOp instead of affineForOp?
   void runOnOperation() {
     // print number of ranks
     llvm::errs() << "n_ranks=" << n_ranks << "\n";
-    
+
     // capture affineForOp and walk the IR
     getOperation()->walk([&](AffineForOp op) {
       OpBuilder builder(op.getContext());
@@ -40,7 +40,7 @@ struct AffineDistributeToMPI
       auto rankOp =
           builder.create<mpi::CommRankOp>(op.getLoc(), retvalType, i32Type);
 
-      // create constants
+      // create constants for 0 and 1
       auto c0 = builder.create<arith::ConstantOp>(op.getLoc(), i32Type,
                                                   builder.getI32IntegerAttr(0));
       auto c1 = builder.create<arith::ConstantOp>(op.getLoc(), i32Type,
@@ -59,7 +59,7 @@ struct AffineDistributeToMPI
 
       // process rank 1
       builder.setInsertionPointToStart(&ifOp.getElseRegion().front());
-      processRankOne(builder, op);
+      processRankOne(builder, op, c0, c1);
 
       // remove original loop
       op.erase();
@@ -68,15 +68,13 @@ struct AffineDistributeToMPI
 
   void processRankZero(OpBuilder &builder, affine::AffineForOp forOp,
                        Value dest, Value tag) {
-    // send first half of data to rank 1
     auto loc = forOp.getLoc();
     auto retvalType = builder.getType<mpi::RetvalType>();
-    auto i32Type = builder.getI32Type();
 
     // TODO: for (auto arg : funcOp.getArguments()) { mpi_send }
 
-    // send first half of data to rank 1
     // get all memref operands from the loop body
+    // TODO: only send what is used by the other node?
     SmallVector<Value, 4> memrefOperands;
     forOp.walk([&](Operation *op) {
       if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
@@ -95,25 +93,99 @@ struct AffineDistributeToMPI
     }
 
     // create affine loop for the second half
-    auto upperBound = forOp.getUpperBound();
-    auto lowerBound = getHalfPoint(builder, forOp);
+    // new bound for the new loop
+    auto upperBoundMap = forOp.getUpperBoundMap();
+    auto upperBoundOperands = forOp.getUpperBoundOperands();
+    auto lowerBoundMap = getHalfPoint(builder, forOp);
+    auto lowerBoundOperands = forOp.getLowerBoundOperands();
 
     // insert new loop
-    
+    auto newLoop = builder.create<affine::AffineForOp>(
+        loc, lowerBoundOperands, lowerBoundMap, upperBoundOperands,
+        upperBoundMap);
+
+    // clone the original loop body into the new loop
+    IRMapping mapping;
+    mapping.map(forOp.getInductionVar(), newLoop.getInductionVar());
+
+    // get the original loop body
+    Block &originalBody = forOp.getRegion().front();
+
+    // clone operations from original body to new loop body, excluding the
+    // terminator
+    builder.setInsertionPointToStart(newLoop.getBody());
+    for (auto &op : originalBody.without_terminator()) {
+      builder.clone(op, mapping);
+    }
+
     // receive processed first half
     // only receive the result memref (assumed to be the last operand)
+    builder.setInsertionPointAfter(newLoop);
     if (!memrefOperands.empty()) {
       auto resultMemref = memrefOperands.back();
       builder.create<mpi::RecvOp>(loc, retvalType, resultMemref, dest, tag);
     }
   }
 
-  void processRankOne(OpBuilder &builder, affine::AffineForOp forOp) {
-    // allocate local buffers
-    // receive data from rank 0
+  void processRankOne(OpBuilder &builder, affine::AffineForOp forOp, Value dest,
+                      Value tag) {
+    auto loc = forOp.getLoc();
+    auto retvalType = builder.getType<mpi::RetvalType>();
+
+    // collect all memref operands from the loop body
+    /*SmallVector<Value, 4> memrefOperands;*/
+    /*SmallVector<Value, 4> allocatedMemrefs;*/
+    /*forOp.walk([&](Operation *op) {*/
+    /*  if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {*/
+    /*    if (!llvm::is_contained(memrefOperands, loadOp.getMemref()))*/
+    /*      memrefOperands.push_back(loadOp.getMemref());*/
+    /*  }*/
+    /*  if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {*/
+    /*    if (!llvm::is_contained(memrefOperands, storeOp.getMemref()))*/
+    /*      memrefOperands.push_back(storeOp.getMemref());*/
+    /*  }*/
+    /*});*/
+
+    // allocate local buffers with same types as original memrefs
+    // FIXME:crashes here!
+    /*for (auto memref : memrefOperands) {*/
+    /*  auto memrefType = mlir::cast<MemRefType>(memref.getType());*/
+    /*  auto allocated = builder.create<memref::AllocOp>(loc, memrefType);*/
+    /*  allocatedMemrefs.push_back(allocated);*/
+    /*}*/
+    /**/
+    /*// receive data from rank 0*/
+    /*for (auto localMemref : allocatedMemrefs) {*/
+    /*  builder.create<mpi::RecvOp>(loc, retvalType, localMemref, dest, tag);*/
+    /*}*/
+
+    // get bounds for the first half
+    auto upperBoundMap = getHalfPoint(builder, forOp);
+    auto upperBoundOperands = forOp.getUpperBoundOperands();
+    auto lowerBoundMap = forOp.getLowerBoundMap();
+    auto lowerBoundOperands = forOp.getLowerBoundOperands();
+
     // create affine loop for the first half
+    // FIXME:crashes here!
+    auto newLoop = builder.create<affine::AffineForOp>(
+        loc, lowerBoundOperands, lowerBoundMap, upperBoundOperands,
+        upperBoundMap);
+
+    // clone the original loop body into the new loop
+    IRMapping mapping;
+    mapping.map(forOp.getInductionVar(), newLoop.getInductionVar());
+
     // send result back to rank 0
-    // cleanup local buffers (memrefs dealloc)
+    /*builder.setInsertionPointAfter(newLoop);*/
+    /*if (!allocatedMemrefs.empty()) {*/
+    /*    auto resultMemref = allocatedMemrefs.back();*/
+    /*    builder.create<mpi::SendOp>(loc, retvalType, resultMemref, dest, tag);*/
+    /*}*/
+
+    // cleanup: deallocate all local buffers
+    /*for (auto memref : allocatedMemrefs) {*/
+    /*    builder.create<memref::DeallocOp>(loc, memref);*/
+    /*}*/
   }
 
   // helper function to get the midpoint of the loop range
