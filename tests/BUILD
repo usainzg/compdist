@@ -6,7 +6,6 @@ filegroup(
     testonly = True,
     data = [
         "//tests:lit.cfg.py",
-        "//tests:poly_to_llvm_main.c",
         "//tools:tutorial-opt",
         "@llvm-project//clang:clang",
         "@llvm-project//llvm:FileCheck",
