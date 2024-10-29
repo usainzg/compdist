@@ -22,6 +22,10 @@ struct AffineDistributeToMPI
 
   // TODO: change to work with funcOp instead of affineForOp?
   void runOnOperation() {
+    // print number of ranks
+    llvm::errs() << "n_ranks=" << n_ranks << "\n";
+    
+    // capture affineForOp and walk the IR
     getOperation()->walk([&](AffineForOp op) {
       OpBuilder builder(op.getContext());
 
