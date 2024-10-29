@@ -14,6 +14,10 @@ def AffineDistributeToMPI : Pass<"affine-distribute-to-mpi"> {
     "mlir::mpi::MPIDialect",
     "mlir::memref::MemRefDialect",
   ];
+  let options = [
+    Option<"n_ranks", "n-ranks", "int64_t", /*default=*/"2",
+           "Number of ranks">,
+  ];
 }
 
 #endif  // LIB_TRANSFORM_AFFINE_PASSES_TD_
