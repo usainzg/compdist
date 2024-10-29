@@ -51,7 +51,7 @@ struct AffineDistributeToMPI
           op.getLoc(), arith::CmpIPredicate::eq, rankOp.getRank(), c0);
 
       // create if-else structure
-      auto ifOp = builder.create<scf::IfOp>(op.getLoc(), cmpOp);
+      auto ifOp = builder.create<scf::IfOp>(op.getLoc(), cmpOp, true);
 
       // process rank 0
       builder.setInsertionPointToStart(&ifOp.getThenRegion().front());
@@ -118,7 +118,6 @@ struct AffineDistributeToMPI
       builder.clone(op, mapping);
     }
 
-    // receive processed first half
     // only receive the result memref (assumed to be the last operand)
     builder.setInsertionPointAfter(newLoop);
     if (!memrefOperands.empty()) {
@@ -133,31 +132,30 @@ struct AffineDistributeToMPI
     auto retvalType = builder.getType<mpi::RetvalType>();
 
     // collect all memref operands from the loop body
-    /*SmallVector<Value, 4> memrefOperands;*/
-    /*SmallVector<Value, 4> allocatedMemrefs;*/
-    /*forOp.walk([&](Operation *op) {*/
-    /*  if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {*/
-    /*    if (!llvm::is_contained(memrefOperands, loadOp.getMemref()))*/
-    /*      memrefOperands.push_back(loadOp.getMemref());*/
-    /*  }*/
-    /*  if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {*/
-    /*    if (!llvm::is_contained(memrefOperands, storeOp.getMemref()))*/
-    /*      memrefOperands.push_back(storeOp.getMemref());*/
-    /*  }*/
-    /*});*/
+    SmallVector<Value, 4> memrefOperands;
+    SmallVector<Value, 4> allocatedMemrefs;
+    forOp.walk([&](Operation *op) {
+      if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
+        if (!llvm::is_contained(memrefOperands, loadOp.getMemref()))
+          memrefOperands.push_back(loadOp.getMemref());
+      }
+      if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
+        if (!llvm::is_contained(memrefOperands, storeOp.getMemref()))
+          memrefOperands.push_back(storeOp.getMemref());
+      }
+    });
 
     // allocate local buffers with same types as original memrefs
-    // FIXME:crashes here!
-    /*for (auto memref : memrefOperands) {*/
-    /*  auto memrefType = mlir::cast<MemRefType>(memref.getType());*/
-    /*  auto allocated = builder.create<memref::AllocOp>(loc, memrefType);*/
-    /*  allocatedMemrefs.push_back(allocated);*/
-    /*}*/
-    /**/
-    /*// receive data from rank 0*/
-    /*for (auto localMemref : allocatedMemrefs) {*/
-    /*  builder.create<mpi::RecvOp>(loc, retvalType, localMemref, dest, tag);*/
-    /*}*/
+    for (auto memref : memrefOperands) {
+      auto memrefType = mlir::cast<MemRefType>(memref.getType());
+      auto allocated = builder.create<memref::AllocOp>(loc, memrefType);
+      allocatedMemrefs.push_back(allocated);
+    }
+
+    // receive data from rank 0
+    for (auto localMemref : allocatedMemrefs) {
+      builder.create<mpi::RecvOp>(loc, retvalType, localMemref, dest, tag);
+    }
 
     // get bounds for the first half
     auto upperBoundMap = getHalfPoint(builder, forOp);
@@ -166,7 +164,6 @@ struct AffineDistributeToMPI
     auto lowerBoundOperands = forOp.getLowerBoundOperands();
 
     // create affine loop for the first half
-    // FIXME:crashes here!
     auto newLoop = builder.create<affine::AffineForOp>(
         loc, lowerBoundOperands, lowerBoundMap, upperBoundOperands,
         upperBoundMap);
@@ -174,18 +171,30 @@ struct AffineDistributeToMPI
     // clone the original loop body into the new loop
     IRMapping mapping;
     mapping.map(forOp.getInductionVar(), newLoop.getInductionVar());
+    
+    // map the original memrefs to the local allocated ones
+    for (auto [origMemref, localMemref] : llvm::zip(memrefOperands, allocatedMemrefs)) {
+        mapping.map(origMemref, localMemref);
+    }
+    
+    // clone operations from original body to new loop body
+    builder.setInsertionPointToStart(newLoop.getBody());
+    Block &originalBody = forOp.getRegion().front();
+    for (auto &op : originalBody.without_terminator()) {
+        builder.clone(op, mapping);
+    }
 
     // send result back to rank 0
-    /*builder.setInsertionPointAfter(newLoop);*/
-    /*if (!allocatedMemrefs.empty()) {*/
-    /*    auto resultMemref = allocatedMemrefs.back();*/
-    /*    builder.create<mpi::SendOp>(loc, retvalType, resultMemref, dest, tag);*/
-    /*}*/
+    builder.setInsertionPointAfter(newLoop);
+    if (!allocatedMemrefs.empty()) {
+        auto resultMemref = allocatedMemrefs.back();
+        builder.create<mpi::SendOp>(loc, retvalType, resultMemref, dest, tag);
+    }
 
     // cleanup: deallocate all local buffers
-    /*for (auto memref : allocatedMemrefs) {*/
-    /*    builder.create<memref::DeallocOp>(loc, memref);*/
-    /*}*/
+    for (auto memref : allocatedMemrefs) {
+        builder.create<memref::DeallocOp>(loc, memref);
+    }
   }
 
   // helper function to get the midpoint of the loop range
