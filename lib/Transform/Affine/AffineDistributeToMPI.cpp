@@ -21,6 +21,7 @@ struct AffineDistributeToMPI
   using AffineDistributeToMPIBase::AffineDistributeToMPIBase;
 
   // NOTE: change to work with funcOp instead of affineForOp?
+  // -> not necessary?
   void runOnOperation() {
     // print number of ranks
     llvm::errs() << "n_ranks=" << n_ranks << "\n";
@@ -28,7 +29,6 @@ struct AffineDistributeToMPI
     // capture affineForOp and walk the IR
     getOperation()->walk([&](AffineForOp op) {
       OpBuilder builder(op.getContext());
-
       builder.setInsertionPoint(op);
 
       // add mpi init
@@ -41,6 +41,8 @@ struct AffineDistributeToMPI
           builder.create<mpi::CommRankOp>(op.getLoc(), retvalType, i32Type);
 
       // create constants for 0 and 1
+      // NOTE:here create constants for all the ranks that we have
+      // e.g., n ranks -> 0, 1, 2, ..., n-1 constants?
       auto c0 = builder.create<arith::ConstantOp>(op.getLoc(), i32Type,
                                                   builder.getI32IntegerAttr(0));
       auto c1 = builder.create<arith::ConstantOp>(op.getLoc(), i32Type,
@@ -51,6 +53,7 @@ struct AffineDistributeToMPI
           op.getLoc(), arith::CmpIPredicate::eq, rankOp.getRank(), c0);
 
       // create if-else structure
+      // NOTE:the last boolean param represents withElseBlock
       auto ifOp = builder.create<scf::IfOp>(op.getLoc(), cmpOp, true);
 
       // process rank 0
@@ -71,7 +74,7 @@ struct AffineDistributeToMPI
     auto loc = forOp.getLoc();
     auto retvalType = builder.getType<mpi::RetvalType>();
 
-    // TODO: for (auto arg : funcOp.getArguments()) { mpi_send }
+    // NOTE: for (auto arg : funcOp.getArguments()) { mpi_send }
 
     // get all memref operands from the loop body
     // TODO: only send what is used by the other node?
@@ -171,29 +174,30 @@ struct AffineDistributeToMPI
     // clone the original loop body into the new loop
     IRMapping mapping;
     mapping.map(forOp.getInductionVar(), newLoop.getInductionVar());
-    
+
     // map the original memrefs to the local allocated ones
-    for (auto [origMemref, localMemref] : llvm::zip(memrefOperands, allocatedMemrefs)) {
-        mapping.map(origMemref, localMemref);
+    for (auto [origMemref, localMemref] :
+         llvm::zip(memrefOperands, allocatedMemrefs)) {
+      mapping.map(origMemref, localMemref);
     }
-    
+
     // clone operations from original body to new loop body
     builder.setInsertionPointToStart(newLoop.getBody());
     Block &originalBody = forOp.getRegion().front();
     for (auto &op : originalBody.without_terminator()) {
-        builder.clone(op, mapping);
+      builder.clone(op, mapping);
     }
 
     // send result back to rank 0
     builder.setInsertionPointAfter(newLoop);
     if (!allocatedMemrefs.empty()) {
-        auto resultMemref = allocatedMemrefs.back();
-        builder.create<mpi::SendOp>(loc, retvalType, resultMemref, dest, tag);
+      auto resultMemref = allocatedMemrefs.back();
+      builder.create<mpi::SendOp>(loc, retvalType, resultMemref, dest, tag);
     }
 
     // cleanup: deallocate all local buffers
     for (auto memref : allocatedMemrefs) {
-        builder.create<memref::DeallocOp>(loc, memref);
+      builder.create<memref::DeallocOp>(loc, memref);
     }
   }
 
