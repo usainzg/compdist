@@ -58,7 +58,7 @@ struct AffineDistributeToMPI
 
       // process mpi rank 0 (master)
       builder.setInsertionPointToStart(&ifOp.getThenRegion().front());
-      
+
       // process other mpi ranks
       builder.setInsertionPointToStart(&ifOp.getElseRegion().front());
 
