@@ -1,13 +1,16 @@
 common --action_env=BAZEL_CXXOPTS=-std=c++17
 common --cxxopt='-std=c++17'
 common --deleted_packages=externals
+
 build:macos --apple_platform_type=macos
 build:macos --macos_minimum_os=10.13
 build:macos --macos_sdk_version=10.13
 build:macos_arm64 --cpu=darwin_arm64
+
 common --copt=-fdiagnostics-color=always
 common --test_output=errors
 common -c dbg
+
 build:asan --strip=never
 build:asan --copt -fsanitize=address
 build:asan --copt -DADDRESS_SANITIZER
@@ -15,3 +18,10 @@ build:asan --copt -O1
 build:asan --copt -g
 build:asan --copt -fno-omit-frame-pointer
 build:asan --linkopt -fsanitize=address
+
+build:asan_ubsan --strip=never
+build:asan_ubsan --copt -fsanitize=address,undefined
+build:asan_ubsan --copt -O1
+build:asan_ubsan --copt -g
+build:asan_ubsan --copt -fno-omit-frame-pointer
+build:asan_ubsan --linkopt -fsanitize=address,undefined
