@@ -9,7 +9,7 @@ bazel-testlogs
 /*/CMakeUserPresets.json
 
 # Nested build directory
-/build*
+**/build
 
 # Visual Studio built-in CMake configuration
 .vscode*
