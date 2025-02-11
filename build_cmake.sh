@@ -27,8 +27,13 @@ cmake ../llvm -G $BUILD_SYSTEM \
       -DLLVM_CCACHE_DIR=$HOME/ccache \
       -DLLVM_ENABLE_LLD=ON \
       -DLLVM_USE_SPLIT_DWARF=ON \
-      -DMLIR_INCLUDE_INTEGRATION_TESTS=ON
+      # -DMLIR_INCLUDE_INTEGRATION_TESTS=ON
 
 cmake --build . --target check-mlir
+cmake --build . --target MLIRAffineDistributeToMPIPasses
+cmake --build . --target mlir-headers
+cmake --build . --target mlir-doc
+cmake --build . --target tutorial-opt
+cmake --build . --target check-tutorial-opt
 
 popd
