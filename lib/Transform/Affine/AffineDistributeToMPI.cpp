@@ -31,55 +31,115 @@ struct AffineDistributeToMPI
       OpBuilder builder(op.getContext());
       builder.setInsertionPoint(op);
 
-      // add mpi init
+      auto i32Type = builder.getI32Type();
+      // create constants for n_ranks
+      SmallVector<Value, 4> rankConstants;
+      for (int i = 0; i < n_ranks; ++i) {
+        rankConstants.push_back(builder.create<arith::ConstantOp>(
+            op.getLoc(), i32Type, builder.getI32IntegerAttr(i)));
+      }
+
+      // add mpi retval + init
       auto mpiRetvalType = builder.getType<mpi::RetvalType>();
-      auto mpiInitOp = builder.create<mpi::InitOp>(op.getLoc(), mpiRetvalType);
+      builder.create<mpi::InitOp>(op.getLoc(), mpiRetvalType);
 
       // get mpi rank
-      auto i32Type = builder.getI32Type();
       auto mpiRankOp =
           builder.create<mpi::CommRankOp>(op.getLoc(), mpiRetvalType, i32Type);
 
-      // create constants for 0 and 1
-      // NOTE:here create constants for all the ranks that we have
-      // e.g., n ranks -> 0, 1, 2, ..., n-1 constants?
-      auto c0 = builder.create<arith::ConstantOp>(op.getLoc(), i32Type,
-                                                  builder.getI32IntegerAttr(0));
-      auto c1 = builder.create<arith::ConstantOp>(op.getLoc(), i32Type,
-                                                  builder.getI32IntegerAttr(1));
-
       // create comparison for rank
-      auto cmpOp = builder.create<arith::CmpIOp>(
-          op.getLoc(), arith::CmpIPredicate::eq, mpiRankOp.getRank(), c0);
+      auto cmpOp =
+          builder.create<arith::CmpIOp>(op.getLoc(), arith::CmpIPredicate::eq,
+                                        mpiRankOp.getRank(), rankConstants[0]);
 
       // create if-else structure
-      // NOTE:the last boolean param represents withElseBlock
-      auto ifOp = builder.create<scf::IfOp>(op.getLoc(), cmpOp, true);
+      auto ifOp =
+          builder.create<scf::IfOp>(op.getLoc(), cmpOp, /*withElseBlock=*/true);
 
-      // process mpi rank 0 (master)
       builder.setInsertionPointToStart(&ifOp.getThenRegion().front());
+      // TODO: process mpi rank 0 (master)
+      SmallVector<Value, 4> loadMemrefs;
+      SmallVector<Value, 4> storeMemrefs;
+      op.walk([&](memref::LoadOp loadOp) {
+        loadMemrefs.push_back(loadOp.getMemRef());
+      });
+      op.walk([&](memref::StoreOp storeOp) {
+        storeMemrefs.push_back(storeOp.getMemRef());
+      });
 
-      // process other mpi ranks
+      SmallVector<Value, 4> loadSubviews;
+      for (auto memref : loadMemrefs) {
+        auto chunkSize =
+            cast<MemRefType>(memref.getType()).getShape()[0] / n_ranks;
+        auto memrefType = cast<MemRefType>(memref.getType());
+        auto [strides, offsets] = memrefType.getStridesAndOffset();
+        auto subViewOp = builder.create<memref::SubViewOp>(
+            op.getLoc(), memref, offsets, chunkSize, strides);
+        loadSubviews.push_back(subViewOp);
+      }
+      for (auto subview : loadSubviews) {
+        // send a subview to each rank except rank 0
+        for (int i = 1; i < n_ranks; ++i) {
+          builder.create<mpi::SendOp>(op.getLoc(), mpiRetvalType, subview,
+                                      rankConstants[0], rankConstants[i]);
+        }
+      }
+      
+      // create a new affine loop with the chunk size
+      // TODO: change getHalfPoint
+      auto upperBoundMapHalf = getHalfPoint(builder, op, /*isUpper=*/true);
+      auto upperBoundOperandsHalf = op.getUpperBoundOperands();
+      auto lowerBoundMapHalf = op.getLowerBoundMap();
+      auto lowerBoundOperandsHalf = op.getLowerBoundOperands();
+
+      // insert new loop
+      auto newLoop = builder.create<affine::AffineForOp>(
+          op->getLoc(), lowerBoundOperandsHalf, lowerBoundMapHalf,
+          upperBoundOperandsHalf, upperBoundMapHalf);
+
+      // clone the original loop body into the new loop
+      IRMapping mapping;
+      mapping.map(op.getInductionVar(), newLoop.getInductionVar());
+
+      // get the original loop body
+      Block &originalBody = op.getRegion().front();
+
+      // clone operations from original body to new loop body, excluding the
+      // terminator
+      builder.setInsertionPointToStart(newLoop.getBody());
+      for (auto &op : originalBody.without_terminator()) {
+        builder.clone(op, mapping);
+      }
+      
+      SmallVector<Value, 4> storeSubviews;
+      builder.setInsertionPointAfter(newLoop);
+      for (auto memref : storeMemrefs) {
+        auto chunkSize =
+            cast<MemRefType>(memref.getType()).getShape()[0] / n_ranks;
+        auto memrefType = cast<MemRefType>(memref.getType());
+        auto [strides, offsets] = memrefType.getStridesAndOffset();
+        auto subViewOp = builder.create<memref::SubViewOp>(
+            op.getLoc(), memref, offsets, chunkSize, strides);
+        storeSubviews.push_back(subViewOp);
+      }
+      for (auto subview : storeSubviews) {
+        // receive a subview from other ranks
+        for (int i = 1; i < n_ranks; ++i) {
+          builder.create<mpi::RecvOp>(op.getLoc(), mpiRetvalType, subview,
+                                      rankConstants[i], rankConstants[i]);
+        }
+      }
+
       builder.setInsertionPointToStart(&ifOp.getElseRegion().front());
+      // TODO: process other mpi ranks
 
       // remove original loop
       op.erase();
     });
   }
 
-  // NOTE:this function creates subviews using the memref
-  Value createSubview(Value memref, Value offset, Value size,
-                      OpBuilder &builder, Location loc) {
-    // Create a subview of the memref for the current rank's chunk
-    SmallVector<OpFoldResult, 1> offsets{builder.getIndexAttr(0)};
-    SmallVector<OpFoldResult, 1> sizes{size};
-    SmallVector<OpFoldResult, 1> strides{builder.getIndexAttr(1)};
-
-    return builder.create<memref::SubViewOp>(loc, memref, offsets, sizes,
-                                             strides);
-  }
-
   // helper function to get the midpoint of the loop range
+  // TODO: change to get 
   AffineMap getHalfPoint(OpBuilder &builder, AffineForOp forOp,
                          bool isUpper = false) {
     auto context = builder.getContext();
