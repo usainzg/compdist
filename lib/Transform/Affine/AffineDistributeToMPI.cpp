@@ -84,7 +84,7 @@ struct AffineDistributeToMPI
                                       rankConstants[0], rankConstants[i]);
         }
       }
-      
+
       // create a new affine loop with the chunk size
       // TODO: change getHalfPoint
       auto upperBoundMapHalf = getHalfPoint(builder, op, /*isUpper=*/true);
@@ -110,7 +110,7 @@ struct AffineDistributeToMPI
       for (auto &op : originalBody.without_terminator()) {
         builder.clone(op, mapping);
       }
-      
+
       SmallVector<Value, 4> storeSubviews;
       builder.setInsertionPointAfter(newLoop);
       for (auto memref : storeMemrefs) {
@@ -133,13 +133,70 @@ struct AffineDistributeToMPI
       builder.setInsertionPointToStart(&ifOp.getElseRegion().front());
       // TODO: process other mpi ranks
 
+      for (int i = 1; i < n_ranks; ++i) {
+        auto cmpOpOtherRanks = builder.create<arith::CmpIOp>(
+            op.getLoc(), arith::CmpIPredicate::eq, mpiRankOp.getRank(),
+            rankConstants[i]);
+
+        auto ifOpRank = builder.create<scf::IfOp>(op.getLoc(), cmpOpOtherRanks,
+                                                  /*withElseBlock=*/false);
+
+        builder.setInsertionPointToStart(&ifOpRank.getThenRegion().front());
+
+        // Allocate memory for the subview
+        MemRefType memRefType = MemRefType::get(
+            {cast<MemRefType>(loadMemrefs[0].getType()).getShape()[0] /
+             n_ranks},
+            cast<MemRefType>(loadMemrefs[0].getType()).getElementType());
+        auto allocOp = builder.create<memref::AllocOp>(op.getLoc(), memRefType);
+
+        // Receive the subview from rank 0
+        builder.create<mpi::RecvOp>(op.getLoc(), mpiRetvalType, allocOp,
+                                    rankConstants[0], rankConstants[0]);
+
+        // Compute the chunk of the loop
+        auto upperBoundMapHalfRank =
+            getHalfPoint(builder, op, /*isUpper=*/true);
+        auto upperBoundOperandsHalfRank = op.getUpperBoundOperands();
+        auto lowerBoundMapHalfRank = op.getLowerBoundMap();
+        auto lowerBoundOperandsHalfRank = op.getLowerBoundOperands();
+
+        // Insert the new loop for each rank
+        auto newLoopRank = builder.create<affine::AffineForOp>(
+            op->getLoc(), lowerBoundOperandsHalfRank, lowerBoundMapHalfRank,
+            upperBoundOperandsHalfRank, upperBoundMapHalfRank);
+
+        // Clone the original loop body into the new loop for the rank
+        IRMapping rankMapping;
+        rankMapping.map(op.getInductionVar(), newLoopRank.getInductionVar());
+
+        builder.setInsertionPointToStart(newLoopRank.getBody());
+        for (auto &originalOp : originalBody.without_terminator()) {
+          builder.clone(originalOp, rankMapping);
+        }
+
+        builder.setInsertionPointAfter(newLoopRank);
+
+        // Send the result back to rank 0
+        // Create a subview from the allocated memory
+        auto [strides, offsets] = memRefType.getStridesAndOffset();
+        auto subViewOpRank = builder.create<memref::SubViewOp>(
+            op.getLoc(), allocOp, offsets,
+            cast<MemRefType>(loadMemrefs[0].getType()).getShape()[0] / n_ranks,
+            strides);
+        builder.create<mpi::SendOp>(op.getLoc(), mpiRetvalType, subViewOpRank,
+                                    rankConstants[i], rankConstants[0]);
+
+        builder.create<memref::DeallocOp>(op.getLoc(), allocOp);
+      }
+
       // remove original loop
       op.erase();
     });
   }
 
   // helper function to get the midpoint of the loop range
-  // TODO: change to get 
+  // TODO: change to get
   AffineMap getHalfPoint(OpBuilder &builder, AffineForOp forOp,
                          bool isUpper = false) {
     auto context = builder.getContext();
