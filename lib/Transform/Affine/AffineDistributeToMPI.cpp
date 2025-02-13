@@ -155,11 +155,11 @@ struct AffineDistributeToMPI
                                     rankConstants[0], rankConstants[0]);
 
         // Compute the chunk of the loop
-        auto upperBoundMapHalfRank =
+        auto lowerBoundMapHalfRank =
             getHalfPoint(builder, op, /*isUpper=*/true);
-        auto upperBoundOperandsHalfRank = op.getUpperBoundOperands();
-        auto lowerBoundMapHalfRank = op.getLowerBoundMap();
         auto lowerBoundOperandsHalfRank = op.getLowerBoundOperands();
+        auto upperBoundMapHalfRank = op.getUpperBoundMap();
+        auto upperBoundOperandsHalfRank = op.getUpperBoundOperands();
 
         // Insert the new loop for each rank
         auto newLoopRank = builder.create<affine::AffineForOp>(
